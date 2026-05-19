@@ -96,6 +96,13 @@ function buildQuery(stageStatuses, stageSensors, baselines) {
 	return `Current plant state. Each attack stage specifies the exact sensor to cite — do not substitute:\n${lines.join('\n')}\n\nGenerate suggestions for ATTACK stages only. Emit three direction cards per attack stage (or two if topology says "none" for one direction).`;
 }
 
+// Repair a known c2_5_8b output quirk: an extra `{"` is sometimes inserted
+// between objects in the array (`,{"{"origin"...` instead of `,{"origin"...`),
+// breaking JSON.parse on otherwise-valid output. Apply before parse.
+function repairKnownNewtonCorruptions(jsonText) {
+	return jsonText.replace(/(,\s*)\{"\{"/g, '$1{"').replace(/^\[\s*\{"\{"/g, '[{"');
+}
+
 function parseSuggestions(text) {
 	if (!text) return null;
 	const cleaned = text
@@ -105,8 +112,19 @@ function parseSuggestions(text) {
 	const start = cleaned.indexOf('[');
 	const end = cleaned.lastIndexOf(']');
 	if (start === -1 || end === -1 || end <= start) return null;
+	const sliced = cleaned.slice(start, end + 1);
+	const candidates = [sliced, repairKnownNewtonCorruptions(sliced)];
+	let parsed = null;
+	for (const candidate of candidates) {
+		try {
+			parsed = JSON.parse(candidate);
+			break;
+		} catch {
+			// try next candidate
+		}
+	}
+	if (parsed === null) return null;
 	try {
-		const parsed = JSON.parse(cleaned.slice(start, end + 1));
 		if (!Array.isArray(parsed)) return null;
 		return parsed
 			.filter((s) => {

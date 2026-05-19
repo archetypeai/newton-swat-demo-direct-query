@@ -125,6 +125,13 @@ function buildQuery(stageStatuses, stageSensors = {}) {
 	return `Current plant state:\n${lines.join('\n')}\n\nGenerate suggestions for ATTACK stages only. For each suggestion, cite the specific sensor with the largest deviation from its normal baseline, including its current numeric value.`;
 }
 
+// Repair a known c2_5_8b output quirk: an extra `{"` is sometimes inserted
+// between objects in the array (`,{"{"origin"...` instead of `,{"origin"...`),
+// breaking JSON.parse on otherwise-valid output. Apply before parse.
+function repairKnownNewtonCorruptions(jsonText) {
+	return jsonText.replace(/(,\s*)\{"\{"/g, '$1{"').replace(/^\[\s*\{"\{"/g, '[{"');
+}
+
 function parseSuggestions(text) {
 	if (!text) return null;
 	const cleaned = text
@@ -134,8 +141,18 @@ function parseSuggestions(text) {
 	const start = cleaned.indexOf('[');
 	const end = cleaned.lastIndexOf(']');
 	if (start === -1 || end === -1 || end <= start) return null;
+	const sliced = cleaned.slice(start, end + 1);
+	let parsed = null;
+	for (const candidate of [sliced, repairKnownNewtonCorruptions(sliced)]) {
+		try {
+			parsed = JSON.parse(candidate);
+			break;
+		} catch {
+			// try next candidate
+		}
+	}
+	if (parsed === null) return null;
 	try {
-		const parsed = JSON.parse(cleaned.slice(start, end + 1));
 		if (!Array.isArray(parsed)) return null;
 		return parsed
 			.filter((s) => {
