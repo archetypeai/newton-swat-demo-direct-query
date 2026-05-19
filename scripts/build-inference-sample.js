@@ -10,8 +10,31 @@
 //
 // Usage: node scripts/build-inference-sample.js [--offset=701000] [--rows=6000] [--window=128] [--step=128]
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
+
+// Global per-channel scaler shared with build-knn-library.js and the live
+// /api/classify path. Required — pre-normalizing with consistent stats
+// everywhere is what lets us pass normalize_input=false to Omega.
+const SCALER_PATH = resolve('data/scaler.json');
+const SCALER = existsSync(SCALER_PATH) ? JSON.parse(readFileSync(SCALER_PATH, 'utf-8')) : null;
+if (!SCALER) {
+	console.error('Missing data/scaler.json — run `node scripts/build-scaler.js` first.');
+	process.exit(1);
+}
+function applyScaler(channelFirstWindow, columns) {
+	const out = new Array(columns.length);
+	for (let c = 0; c < columns.length; c++) {
+		const col = columns[c];
+		const m = SCALER.mean[col] ?? 0;
+		const s = SCALER.std[col] ?? 1;
+		const src = channelFirstWindow[c];
+		const dst = new Array(src.length);
+		for (let i = 0; i < src.length; i++) dst[i] = (src[i] - m) / s;
+		out[c] = dst;
+	}
+	return out;
+}
 
 const STAGE_COLUMNS = {
 	P1: ['FIT101', 'LIT101', 'MV101', 'P101'],
@@ -88,7 +111,9 @@ async function queryOmega(endpoint, apiKey, channelFirstWindow) {
 		body: JSON.stringify({
 			query: '',
 			model: MODEL,
-			normalize_input: true,
+			// Windows are pre-normalized with the global scaler before this call,
+			// so don't let Omega re-normalize per-window.
+			normalize_input: false,
 			events: [{ type: 'data.numeric_array', event_data: { contents: channelFirstWindow } }]
 		})
 	});
@@ -142,11 +167,12 @@ async function main() {
 		for (let i = 0; i < numWindows; i++) {
 			const start = i * args.step;
 			const win = extractWindow(rows, idx, start, args.window);
+			const scaled = applyScaler(win, cols);
 			const truth = majorityLabel(rows, labelIdx, start, args.window);
 			let attempt = 0;
 			while (true) {
 				try {
-					const emb2d = await queryOmega(endpoint, env.ATAI_API_KEY, win);
+					const emb2d = await queryOmega(endpoint, env.ATAI_API_KEY, scaled);
 					embeddings.push({
 						vec: flatten2D(emb2d),
 						label: truth,

@@ -229,14 +229,14 @@
 				{#if mode === 'pca'}
 					PCA-2 · linear projection · live cursor enabled
 				{:else}
-					UMAP-2 · non-linear · 30 library points (low-data approximation)
+					UMAP-2 · non-linear · 188 library points per stage
 				{/if}
 			</div>
 			<div class="text-muted-foreground text-xs leading-relaxed">
 				Each scatter is one stage's Omega embedding space reduced to 2D. Three layers:
 				<span class="text-foreground">faint dots</span> are inference-timeline windows
 				colored by their ground-truth label (where actual playback windows land);
-				<span class="text-foreground">bright ringed dots</span> are the 30 n-shot library
+				<span class="text-foreground">bright ringed dots</span> are the 188 n-shot library
 				examples KNN votes against (<span class="text-atai-good">green=NORMAL</span>,
 				<span class="text-atai-critical">red=ATTACK</span>);
 				the <span class="text-foreground">large ringed circle</span> with a gray trail is

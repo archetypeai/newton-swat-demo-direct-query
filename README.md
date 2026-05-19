@@ -35,10 +35,18 @@ cp .env.example .env
 
 npm install
 
-# One-time: build the n-shot embedding library used by KNN
-node scripts/build-knn-library.js
-# ~3 min, hits /query 180 times (6 stages × 2 classes × 15 windows).
-# Output: data/knn-library.json (~17 MB)
+# One-time: compute per-channel mean/std over the n-shot training pool.
+node scripts/build-scaler.js
+# < 1 sec, writes data/scaler.json (~3 KB, committed).
+
+# One-time: build the n-shot embedding library used by KNN.
+node scripts/build-knn-library.js --step=20
+# ~20 min, hits /query 1,128 times (6 stages × 2 classes × 94 windows).
+# Output: data/knn-library.json (~110 MB, gitignored — rebuild locally).
+
+# Optional: background scatter of inference-timeline windows for the viz panel.
+node scripts/build-inference-sample.js --offset=1384098 --rows=6000
+# ~5 min, writes data/inference-sample.json (~27 MB, gitignored).
 
 npm run dev
 ```
@@ -51,23 +59,31 @@ Three flows: **build** (offline, one-time), **classify** (per playback window), 
 
 ### At a glance
 
+**Scaler phase (offline, one-time, `node scripts/build-scaler.js`):**
+
+1. Read `swat_normal.csv` + `swat_attack.csv` (4,000 rows total per channel).
+2. Compute per-channel mean and standard deviation across the combined pool.
+3. Save to `data/scaler.json`. Used by every subsequent call to `/query` so all windows share a common reference frame.
+
 **Build phase (offline, one-time, `node scripts/build-knn-library.js --step=20`):**
 
 1. Read `swat_normal.csv` (2,000 rows) and `swat_attack.csv` (2,000 rows).
 2. Slide 128-row windows across each file with `step=20` (overlapping → 94 windows per class per stage, 188 per stage total).
-3. For each window: send to `/query` with `model: OmegaEncoder` → get back a `[num_channels × 768]` embedding → flatten to a 1D vector → tag it `NORMAL` or `ATTACK` based on which file it came from.
+3. For each window: apply the global scaler `(x − mean) / std` per channel, then send to `/query` with `model: OmegaEncoder, normalize_input: false` → get back a `[num_channels × 768]` embedding → flatten to a 1D vector → tag it `NORMAL` or `ATTACK` based on which file it came from.
 4. Save all of these as `data/knn-library.json` (gitignored — exceeds GitHub's 100 MB cap; rebuilds in ~20 min).
 
 **Runtime (per playback window, `/api/classify`):**
 
 1. Take the 128 rows under the playhead.
-2. Send to `/query` with the same `OmegaEncoder` model → get the embedding for the live window.
+2. Apply the same global scaler, then send to `/query` with `model: OmegaEncoder, normalize_input: false` → get the embedding for the live window.
 3. Compute Euclidean distance from this embedding to every embedding in the library.
 4. Pick the 3 closest. Majority vote of their labels → predicted class.
 
 KNN doesn't "train" in the way a neural net does — the library *is* the model. The build phase just embeds the n-shot examples once and stores them with their labels; every runtime prediction is a distance lookup against that stored set.
 
-> **Step size matters.** The initial build used `step=128` (non-overlapping → 15 windows per class) which gave leave-one-out accuracies of 30–63%. Rebuilding with `step=20` brings the library to 94 windows per class and lifts LOO to 47–89% per stage (P2 hits 89%, P5 jumps from 30% → 66%). Even at `step=20`, the dataset is genuinely hard — see the **scope caveats** at the bottom.
+> **Normalization matters more than you'd expect.** Calling `/query` with `normalize_input: true` makes Omega z-score each window in isolation, which erases cross-window amplitude signal — two windows where `LIT401` reads 574 vs 950 look identical to the encoder afterwards. Pre-normalizing with a global per-channel scaler and passing `normalize_input: false` preserves the relative magnitudes. This single change took library LOO accuracy from 47–89% per stage to **57–100%**: P2/P4/P5 hit 100%, P1/P3 hit 93%, P6 (only 2 sensors, mostly idle) is the lone laggard at 57%. The skill that called out this failure mode: [archetypeai-agent-skills/skills/newton-machine-state/SKILL.md#step-1-prepare-focus-csvs](https://github.com/archetypeai/agent-skills/blob/main/skills/newton-machine-state/SKILL.md#step-1-prepare-focus-csvs).
+
+> **Step size also matters.** The very first build used `step=128` (non-overlapping → 15 windows per class) and gave LOO of 30–63%. Bumping to `step=20` (94 windows per class) lifted that to 47–89%. Together with global normalization, we now sit at 57–100%.
 
 ### Phase 1 — Build the n-shot KNN library (offline)
 

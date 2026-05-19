@@ -34,6 +34,43 @@ function apiUrl(path) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// Global per-channel StandardScaler (data/scaler.json). Loaded lazily.
+// Pre-normalizing every window with these fixed stats — and passing
+// normalize_input=false to Omega — preserves cross-window amplitude signal
+// that per-window normalization would erase. See scripts/build-scaler.js.
+// ──────────────────────────────────────────────────────────────────────
+
+let SCALER = null;
+let SCALER_ERROR = null;
+function ensureScaler() {
+	if (SCALER || SCALER_ERROR) return;
+	const path = resolve('data/scaler.json');
+	if (!existsSync(path)) {
+		SCALER_ERROR = new Error(
+			'Missing data/scaler.json — run `node scripts/build-scaler.js` first.'
+		);
+		return;
+	}
+	SCALER = JSON.parse(readFileSync(path, 'utf-8'));
+}
+
+function applyScaler(channelFirstWindow, columns) {
+	ensureScaler();
+	if (SCALER_ERROR) throw SCALER_ERROR;
+	const out = new Array(columns.length);
+	for (let c = 0; c < columns.length; c++) {
+		const col = columns[c];
+		const m = SCALER.mean[col] ?? 0;
+		const s = SCALER.std[col] ?? 1;
+		const src = channelFirstWindow[c];
+		const dst = new Array(src.length);
+		for (let i = 0; i < src.length; i++) dst[i] = (src[i] - m) / s;
+		out[c] = dst;
+	}
+	return out;
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // KNN library (loaded once at boot from data/knn-library.json)
 // ──────────────────────────────────────────────────────────────────────
 
@@ -100,7 +137,9 @@ export async function embedWindow(channelFirstWindow) {
 	const data = await postQuery({
 		query: '',
 		model: OMEGA_MODEL,
-		normalize_input: true,
+		// Pre-normalized at the call site via applyScaler(); Omega should NOT
+		// re-normalize per-window or it would erase cross-window amplitude.
+		normalize_input: false,
 		events: [
 			{
 				type: 'data.numeric_array',
@@ -175,7 +214,8 @@ function extractStageWindow(stageId, rows) {
 // embedding-viz panel without re-querying Omega).
 export async function classifyStage(stageId, rows, { k = DEFAULT_CONFIG.nNeighbors } = {}) {
 	const win = extractStageWindow(stageId, rows);
-	const embedding = await embedWindow(win);
+	const scaled = applyScaler(win, STAGE_COLUMNS[stageId]);
+	const embedding = await embedWindow(scaled);
 	const { label, neighbors } = classifyEmbedding(stageId, embedding, k);
 	// Project to 2D for the embedding-viz panel. Cheap (~10-50ms total for
 	// PCA + UMAP transform). If projection ever fails, the classification

@@ -21,8 +21,32 @@
 //
 // Usage: node scripts/build-knn-library.js [--window=128] [--step=128]
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
+
+// Global per-channel scaler. Without this, /query is called with
+// normalize_input=true which normalizes per-window and erases cross-window
+// amplitude signal. With this scaler we normalize once with the same fixed
+// stats everywhere and pass normalize_input=false to Omega.
+const SCALER_PATH = resolve('data/scaler.json');
+const SCALER = existsSync(SCALER_PATH) ? JSON.parse(readFileSync(SCALER_PATH, 'utf-8')) : null;
+if (!SCALER) {
+	console.error('Missing data/scaler.json — run `node scripts/build-scaler.js` first.');
+	process.exit(1);
+}
+function applyScaler(channelFirstWindow, columns) {
+	const out = new Array(columns.length);
+	for (let c = 0; c < columns.length; c++) {
+		const col = columns[c];
+		const m = SCALER.mean[col] ?? 0;
+		const s = SCALER.std[col] ?? 1;
+		const src = channelFirstWindow[c];
+		const dst = new Array(src.length);
+		for (let i = 0; i < src.length; i++) dst[i] = (src[i] - m) / s;
+		out[c] = dst;
+	}
+	return out;
+}
 
 const STAGE_COLUMNS = {
 	P1: ['FIT101', 'LIT101', 'MV101', 'P101'],
@@ -86,7 +110,10 @@ async function queryOmega(endpoint, apiKey, channelFirstWindow) {
 		body: JSON.stringify({
 			query: '',
 			model: MODEL,
-			normalize_input: true,
+			// We pre-normalize with the global StandardScaler before sending, so
+			// Omega should NOT normalize per-window — that would erase the
+			// cross-window amplitude signal we just preserved.
+			normalize_input: false,
 			events: [
 				{
 					type: 'data.numeric_array',
@@ -122,16 +149,18 @@ function flatten2D(arr) {
 
 async function buildForStage(stageId, csvSets, headerIdxByLabel, endpoint, apiKey, windowSize, stepSize) {
 	const embeddings = [];
+	const stageColumns = STAGE_COLUMNS[stageId];
 	for (const { label, csv } of csvSets) {
 		const headerIdx = headerIdxByLabel[label];
 		const rows = csv.rows;
 		const total = rows.length;
 		for (let start = 0; start + windowSize <= total; start += stepSize) {
 			const win = extractWindow(rows, headerIdx, start, windowSize);
+			const scaled = applyScaler(win, stageColumns);
 			let attempt = 0;
 			while (true) {
 				try {
-					const emb2d = await queryOmega(endpoint, apiKey, win);
+					const emb2d = await queryOmega(endpoint, apiKey, scaled);
 					embeddings.push({ label, vec: flatten2D(emb2d) });
 					break;
 				} catch (err) {
