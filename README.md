@@ -1,5 +1,7 @@
 # newton-swat-demo-direct-query
 
+![SWaT six-stage dashboard with Omega embedding PCA view](images/swat-direct-query-pca.png)
+
 Feasibility demo: a water treatment plant paved with sensors, using **Newton's Direct Query API** for Omega embeddings + local KNN to detect per-stage anomalies in real time, and Newton text reasoning (also via Direct Query) to surface suggested upstream/downstream actions to an operator.
 
 Branched from [`newton-swat-demo`](https://github.com/archetypeai/newton-swat-demo), which used the Machine State Lens (SSE streaming, six parallel sessions). This branch removes the lens entirely:
@@ -49,12 +51,12 @@ Three flows: **build** (offline, one-time), **classify** (per playback window), 
 
 ### At a glance
 
-**Build phase (offline, one-time, `scripts/build-knn-library.js`):**
+**Build phase (offline, one-time, `node scripts/build-knn-library.js --step=20`):**
 
 1. Read `swat_normal.csv` (2,000 rows) and `swat_attack.csv` (2,000 rows).
-2. Slide windows (128 rows, step=20 in the rebuild) across each file.
+2. Slide 128-row windows across each file with `step=20` (overlapping → 94 windows per class per stage, 188 per stage total).
 3. For each window: send to `/query` with `model: OmegaEncoder` → get back a `[num_channels × 768]` embedding → flatten to a 1D vector → tag it `NORMAL` or `ATTACK` based on which file it came from.
-4. Save all of these as `data/knn-library.json`.
+4. Save all of these as `data/knn-library.json` (gitignored — exceeds GitHub's 100 MB cap; rebuilds in ~20 min).
 
 **Runtime (per playback window, `/api/classify`):**
 
@@ -64,6 +66,8 @@ Three flows: **build** (offline, one-time), **classify** (per playback window), 
 4. Pick the 3 closest. Majority vote of their labels → predicted class.
 
 KNN doesn't "train" in the way a neural net does — the library *is* the model. The build phase just embeds the n-shot examples once and stores them with their labels; every runtime prediction is a distance lookup against that stored set.
+
+> **Step size matters.** The initial build used `step=128` (non-overlapping → 15 windows per class) which gave leave-one-out accuracies of 30–63%. Rebuilding with `step=20` brings the library to 94 windows per class and lifts LOO to 47–89% per stage (P2 hits 89%, P5 jumps from 30% → 66%). Even at `step=20`, the dataset is genuinely hard — see the **scope caveats** at the bottom.
 
 ### Phase 1 — Build the n-shot KNN library (offline)
 
@@ -163,10 +167,18 @@ The server flattens `[num_channels × 768]` into a single 1D vector per window b
 
 Collapsed by default — click "Omega embeddings · 6-stage 2D projection" at the bottom to expand. Six small scatters, one per stage. Mode toggle: **PCA** vs **UMAP**.
 
-- Static background: 30 library embeddings per stage (15 NORMAL green, 15 ATTACK red).
-- Live cursor: each `/api/classify` response carries `coords.pca` and `coords.umap` for the current window — appended to a fading trail (last 8 points), with the head marker coloured by current classification.
+![UMAP view of the embedding panel](images/swat-direct-query-umap.png)
+
+Three layers per scatter:
+
+- **Faint dots** — inference-timeline windows (build with `node scripts/build-inference-sample.js`), coloured by their ground-truth `normal`/`attack` label from `swat_raw_labeled.csv`. Shows where actual playback windows land in the embedding space, independent of what the library thinks.
+- **Bright ringed dots** — the n-shot library examples KNN votes against (green = NORMAL, red = ATTACK).
+- **Large ringed circle with a gray trail** — the current playback window, projected through the same PCA / UMAP that was fit on the library.
+
+Each scatter also shows a **LOO** badge: leave-one-out KNN accuracy in the full (not 2D) embedding space, per stage. Green ≥80%, amber 65–80%, red <65%. This is the diagnostic for whether the classifier actually works for that stage — the 2D picture is a lossy summary, but LOO is computed on the real embeddings.
+
 - **PCA-2** is computed by power iteration over the centered covariance of the library embeddings (linear, ~ms in JS, accurate transform on any new point).
-- **UMAP-2** is fit with `umap-js` on the library embeddings (30 points per stage — on the low end for UMAP; treat as a qualitative layout, not a precise map). `umap.transform(new_embedding)` projects live windows into the same 2D space.
+- **UMAP-2** is fit with `umap-js` on the library embeddings. `umap.transform(new_embedding)` projects live windows into the same 2D space.
 - Both projections are fit once at server boot and cached in memory; no offline script needed.
 
 Why not t-SNE: t-SNE has no `transform()` for new points by construction — adding the live cursor would force a refit on every tick, producing a totally different layout each time.
