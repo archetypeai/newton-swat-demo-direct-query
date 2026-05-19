@@ -61,7 +61,7 @@ const STAGE_COLUMNS = {
 	P6: ['FIT601', 'P602']
 };
 const STAGE_IDS = Object.keys(STAGE_COLUMNS);
-const MODEL = 'OmegaEncoder::omega_embeddings_01';
+const MODEL = 'OmegaEncoder::omega_embeddings_1_4';
 
 function loadEnv() {
 	const env = {};

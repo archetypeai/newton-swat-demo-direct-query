@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { projectEmbedding } from './projections.js';
 
 const API_VERSION = 'v0.5';
-const OMEGA_MODEL = 'OmegaEncoder::omega_embeddings_01';
+const OMEGA_MODEL = 'OmegaEncoder::omega_embeddings_1_4';
 
 // SWaT stage → sensor column mapping. Identical to the original Lens-based demo
 // so the same n-shot files and KNN library work without conversion.
@@ -270,7 +270,7 @@ export async function queryNewton({ query, systemPrompt = '', maxNewTokens = 102
 				system_prompt: systemPrompt,
 				instruction_prompt: systemPrompt,
 				file_ids: [],
-				model: 'Newton::c2_4_7b_251215a172f6d7',
+				model: 'Newton::c2_5_8b_260413b723a9ab',
 				max_new_tokens: maxNewTokens,
 				sanitize: false
 			}),

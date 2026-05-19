@@ -159,7 +159,7 @@ export async function fetchSuggestionsDirect({
 		system_prompt: SYSTEM_PROMPT,
 		instruction_prompt: SYSTEM_PROMPT,
 		file_ids: [],
-		model: 'Newton::c2_4_7b_251215a172f6d7',
+		model: 'Newton::c2_5_8b_260413b723a9ab',
 		max_new_tokens: 700,
 		sanitize: false
 	};

@@ -146,8 +146,8 @@ The Direct Query body shape (per stage, per window):
 ```json
 {
   "query": "",
-  "model": "OmegaEncoder::omega_embeddings_01",
-  "normalize_input": true,
+  "model": "OmegaEncoder::omega_embeddings_1_4",
+  "normalize_input": false,
   "events": [
     {
       "type": "data.numeric_array",
@@ -162,6 +162,13 @@ The Direct Query body shape (per stage, per window):
   ]
 }
 ```
+
+The app uses two models against the `/query` endpoint:
+
+- **`OmegaEncoder::omega_embeddings_1_4`** for per-window classification embeddings. Picked over `omega_embeddings_01` after a side-by-side leave-one-out comparison: P1 93→98%, P3 93→97%, no regressions on the other stages.
+- **`Newton::c2_5_8b_260413b723a9ab`** for operator suggestion JSON. Picked over `c2_4_7b_251215a172f6d7` after running the actual suggestion prompt: c2_5_8b produces 9/9 valid topology-checked cards every run vs c2_4_7b's 3/9 average (the older model returns terse non-citing text that fails the topology validator two-thirds of the time). Latency is higher (~13 s vs ~4 s per call), but c2_4_7b's "fast" responses are mostly unusable.
+
+Two helper scripts in `scripts/` let you re-run those comparisons on your own setup: `compare_omega_models.py` (the Omega encoder pair) and `compare-newton-models.js` (the Newton C pair on the actual suggestions prompt).
 
 Response (per probe):
 
