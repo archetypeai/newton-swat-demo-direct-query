@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { ATAI_API_ENDPOINT } from '$env/static/private';
+import { ATAI_API_ENDPOINT, ATAI_API_KEY } from '$env/static/private';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -43,6 +43,10 @@ function loadBaselines() {
 }
 loadBaselines();
 
+// apiKey is exposed here so the browser can call Newton's /query directly for
+// operator suggestions, mirroring the workaround used in the Lens-based version
+// (server-side /query was getting wedged in dev). Same trust boundary as before
+// — the key was already returned from /api/session/one in the original demo.
 export async function GET() {
-	return json({ baselines: BASELINES, endpoint: ATAI_API_ENDPOINT });
+	return json({ baselines: BASELINES, endpoint: ATAI_API_ENDPOINT, apiKey: ATAI_API_KEY });
 }

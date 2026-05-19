@@ -21,3 +21,8 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Generated embedding caches — rebuild with scripts/build-{knn-library,inference-sample}.js.
+# Excluded from git because knn-library.json exceeds GitHub's 100 MB hard limit.
+data/knn-library.json
+data/inference-sample.json
